@@ -11,26 +11,40 @@ from gi.repository import Gtk, Gdk, GLib
 
 CONFIG_FILE = os.path.expanduser("~/.config/prompt_click/strings.json")
 
+DEFAULT_CONFIG = {
+    "settings": {
+        "truncate_length": 30
+    },
+    "strings": ["Example string 1", "Example string 2"]
+}
 
-def load_strings():
-    """Load strings from config file."""
+
+def load_config():
+    """Load config from file."""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                # Handle old format (just a list of strings)
+                if isinstance(data, list):
+                    return {
+                        "settings": DEFAULT_CONFIG["settings"].copy(),
+                        "strings": data
+                    }
+                return data
         except:
             pass
-    return ["Example string 1", "Example string 2"]
+    return DEFAULT_CONFIG.copy()
 
 
-def save_strings(strings):
-    """Save strings to config file."""
+def save_config(config):
+    """Save config to file."""
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(strings, f, ensure_ascii=False, indent=2)
+        json.dump(config, f, ensure_ascii=False, indent=2)
 
 
-def truncate(text, max_len=30):
+def truncate(text, max_len):
     """Truncate text to max_len characters with ellipsis."""
     if len(text) <= max_len:
         return text
@@ -73,13 +87,17 @@ class StringEditDialog(Gtk.Dialog):
 class EditDialog(Gtk.Dialog):
     """Dialog for editing the list of strings."""
 
-    def __init__(self, parent, strings):
+    def __init__(self, parent, config):
         super().__init__(title="Edit Strings", parent=parent, modal=True)
-        self.set_default_size(450, 350)
+        self.set_default_size(450, 400)
         self.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
                          Gtk.STOCK_OK, Gtk.ResponseType.OK)
 
-        self.strings = strings.copy()
+        self.config = {
+            "settings": config["settings"].copy(),
+            "strings": config["strings"].copy()
+        }
+        self.truncate_len = self.config["settings"].get("truncate_length", 30)
 
         box = self.get_content_area()
         box.set_spacing(10)
@@ -88,10 +106,28 @@ class EditDialog(Gtk.Dialog):
         box.set_margin_top(10)
         box.set_margin_bottom(10)
 
+        # Settings section
+        settings_frame = Gtk.Frame(label="Settings")
+        settings_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        settings_box.set_margin_start(10)
+        settings_box.set_margin_end(10)
+        settings_box.set_margin_top(5)
+        settings_box.set_margin_bottom(5)
+
+        label = Gtk.Label(label="Display characters:")
+        settings_box.pack_start(label, False, False, 0)
+
+        self.truncate_spin = Gtk.SpinButton.new_with_range(10, 200, 5)
+        self.truncate_spin.set_value(self.truncate_len)
+        settings_box.pack_start(self.truncate_spin, False, False, 0)
+
+        settings_frame.add(settings_box)
+        box.pack_start(settings_frame, False, False, 0)
+
         # List store: display text, full text
         self.store = Gtk.ListStore(str, str)
-        for s in self.strings:
-            self.store.append([truncate(s), s])
+        for s in self.config["strings"]:
+            self.store.append([truncate(s, self.truncate_len), s])
 
         self.tree = Gtk.TreeView(model=self.store)
         self.tree.set_reorderable(True)
@@ -152,7 +188,7 @@ class EditDialog(Gtk.Dialog):
             response = dialog.run()
             if response == Gtk.ResponseType.OK:
                 new_text = dialog.get_text()
-                model[iter][0] = truncate(new_text)
+                model[iter][0] = truncate(new_text, self.truncate_len)
                 model[iter][1] = new_text
             dialog.destroy()
 
@@ -162,7 +198,7 @@ class EditDialog(Gtk.Dialog):
         if response == Gtk.ResponseType.OK:
             new_text = dialog.get_text()
             if new_text.strip():
-                self.store.append([truncate(new_text), new_text])
+                self.store.append([truncate(new_text, self.truncate_len), new_text])
         dialog.destroy()
 
     def on_remove(self, button):
@@ -189,8 +225,13 @@ class EditDialog(Gtk.Dialog):
                 next_iter = model.get_iter(Gtk.TreePath.new_from_indices([path.get_indices()[0] + 1]))
                 model.swap(iter, next_iter)
 
-    def get_strings(self):
-        return [row[1] for row in self.store]
+    def get_config(self):
+        return {
+            "settings": {
+                "truncate_length": int(self.truncate_spin.get_value())
+            },
+            "strings": [row[1] for row in self.store]
+        }
 
 
 class PopupWindow(Gtk.Window):
@@ -214,7 +255,8 @@ class PopupWindow(Gtk.Window):
         self.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
         self.set_resizable(False)
 
-        self.strings = load_strings()
+        self.config = load_config()
+        self.truncate_len = self.config["settings"].get("truncate_length", 30)
         self.checkboxes = []
 
         # Main container with border
@@ -281,8 +323,8 @@ class PopupWindow(Gtk.Window):
             self.checkbox_box.remove(child)
 
         self.checkboxes = []
-        for s in self.strings:
-            cb = Gtk.CheckButton(label=truncate(s))
+        for s in self.config["strings"]:
+            cb = Gtk.CheckButton(label=truncate(s, self.truncate_len))
             cb.full_text = s  # Store full text as attribute
             self.checkboxes.append(cb)
             self.checkbox_box.pack_start(cb, False, False, 0)
@@ -345,12 +387,13 @@ class PopupWindow(Gtk.Window):
 
     def on_edit(self, button):
         """Open edit dialog."""
-        dialog = EditDialog(self, self.strings)
+        dialog = EditDialog(self, self.config)
         response = dialog.run()
 
         if response == Gtk.ResponseType.OK:
-            self.strings = dialog.get_strings()
-            save_strings(self.strings)
+            self.config = dialog.get_config()
+            self.truncate_len = self.config["settings"].get("truncate_length", 30)
+            save_config(self.config)
             self.rebuild_checkboxes()
 
         dialog.destroy()

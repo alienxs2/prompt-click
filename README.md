@@ -9,9 +9,10 @@ A Linux utility that replaces the default middle-click paste with a customizable
 
 - **Middle-click popup menu** - Select from predefined text snippets
 - **Multi-select** - Choose multiple snippets to paste (joined with ", ")
-- **Easy editing** - Add, edit, remove, and reorder snippets via GUI
+- **Easy editing** - Add, edit, remove, and reorder snippets via GUI with multi-line text editor
 - **Auto-paste** - Automatically pastes selected text to the previous window
-- **Persistent storage** - Snippets saved to `~/.config/prompt_click/strings.json`
+- **Configurable display** - Adjust the number of characters shown in the popup menu
+- **Persistent storage** - Snippets and settings saved to `~/.config/prompt_click/strings.json`
 
 ## Screenshot
 
@@ -19,7 +20,7 @@ A Linux utility that replaces the default middle-click paste with a customizable
 ┌─────────────────────────────┐
 │ Select strings to paste:   │
 │ ☐ Example string 1         │
-│ ☐ Example string 2...      │
+│ ☐ This is a longer text... │
 │ ☐ Another snippet          │
 │─────────────────────────────│
 │  [OK]  [Cancel]  [Edit...]  │
@@ -30,7 +31,7 @@ A Linux utility that replaces the default middle-click paste with a customizable
 
 - Linux with X11 (not Wayland)
 - Python 3
-- GTK 3
+- GTK 3 (python3-gi)
 - xbindkeys
 - xdotool
 - xclip
@@ -40,7 +41,7 @@ A Linux utility that replaces the default middle-click paste with a customizable
 ### Quick Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/prompt-click.git
+git clone https://github.com/alienxs2/prompt-click.git
 cd prompt-click
 ./install.sh
 ```
@@ -61,7 +62,7 @@ chmod +x ~/.local/bin/prompt_click
 
 3. Configure xbindkeys:
 ```bash
-echo '"/home/YOUR_USER/.local/bin/prompt_click"
+echo '"$HOME/.local/bin/prompt_click"
   b:2 + Release' > ~/.xbindkeysrc
 ```
 
@@ -90,22 +91,34 @@ xbindkeys
 2. **Check the snippets** you want to paste
 3. **Click OK** - text is copied to clipboard and pasted automatically
 4. **Click Edit...** to manage your snippets:
-   - Double-click or select + Edit button to modify a snippet
+   - Double-click or select + Edit button to modify a snippet (opens multi-line editor)
    - Use Add/Remove to manage the list
    - Use Up/Down to reorder
+   - Adjust "Display characters" to change how many characters are shown in the popup
 
 ## Configuration
 
-Snippets are stored in `~/.config/prompt_click/strings.json`
+Settings and snippets are stored in `~/.config/prompt_click/strings.json`
 
 Example:
 ```json
-[
-  "Hello, World!",
-  "Best regards,\nJohn Doe",
-  "https://example.com"
-]
+{
+  "settings": {
+    "truncate_length": 30
+  },
+  "strings": [
+    "Hello, World!",
+    "Best regards,\nJohn Doe",
+    "https://example.com"
+  ]
+}
 ```
+
+### Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `truncate_length` | 30 | Number of characters to display in the popup menu |
 
 ## Uninstallation
 
