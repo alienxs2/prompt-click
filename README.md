@@ -10,6 +10,8 @@ A Linux utility that replaces the default middle-click paste with a customizable
 - **Middle-click popup menu** - Select from predefined text snippets
 - **Multi-select** - Choose multiple snippets to paste (joined with ", ")
 - **Easy editing** - Add, edit, remove, and reorder snippets via GUI with multi-line text editor
+- **Section drag-and-drop** - Reorder top-level sections in Edit mode by dragging tabs
+- **One-line previews** - Multi-line strings are shown as one line in lists and popup
 - **Auto-paste** - Automatically pastes selected text to the previous window
 - **Configurable display** - Adjust the number of characters shown in the popup menu
 - **Persistent storage** - Snippets and settings saved to `~/.config/prompt_click/strings.json`
@@ -94,6 +96,7 @@ xbindkeys
    - Double-click or select + Edit button to modify a snippet (opens multi-line editor)
    - Use Add/Remove to manage the list
    - Use Up/Down to reorder
+   - Drag section tabs (e.g., Dev/QA/Review) to reorder top-level sections
    - Adjust "Display characters" to change how many characters are shown in the popup
 
 ## Configuration
@@ -104,7 +107,7 @@ Example:
 ```json
 {
   "settings": {
-    "truncate_length": 30
+    "truncate_length": 100
   },
   "strings": [
     "Hello, World!",
@@ -118,7 +121,7 @@ Example:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `truncate_length` | 30 | Number of characters to display in the popup menu |
+| `truncate_length` | 100 | Number of characters to display in the popup menu |
 
 ## Uninstallation
 

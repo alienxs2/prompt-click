@@ -10,10 +10,11 @@ gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
 
 CONFIG_FILE = os.path.expanduser("~/.config/prompt_click/strings.json")
+DEFAULT_TRUNCATE_LENGTH = 100
 
 DEFAULT_CONFIG = {
     "settings": {
-        "truncate_length": 30
+        "truncate_length": DEFAULT_TRUNCATE_LENGTH
     },
     "sections": [
         {
@@ -22,6 +23,18 @@ DEFAULT_CONFIG = {
         }
     ]
 }
+
+
+def apply_config_migrations(config):
+    """Apply config migrations."""
+    settings = config.setdefault("settings", {})
+    truncate_len = settings.get("truncate_length")
+
+    # Force legacy default (30) to new default (100).
+    if truncate_len in (None, 30):
+        settings["truncate_length"] = DEFAULT_TRUNCATE_LENGTH
+
+    return config
 
 
 def load_config():
@@ -33,22 +46,22 @@ def load_config():
 
                 # Migration: old format (just a list)
                 if isinstance(data, list):
-                    return {
+                    return apply_config_migrations({
                         "settings": DEFAULT_CONFIG["settings"].copy(),
                         "sections": [{"name": "General", "strings": data}]
-                    }
+                    })
 
                 # Migration: old format with "strings" key
                 if "strings" in data and "sections" not in data:
-                    return {
+                    return apply_config_migrations({
                         "settings": data.get("settings", DEFAULT_CONFIG["settings"].copy()),
                         "sections": [{"name": "General", "strings": data["strings"]}]
-                    }
+                    })
 
-                return data
+                return apply_config_migrations(data)
         except:
             pass
-    return DEFAULT_CONFIG.copy()
+    return apply_config_migrations(DEFAULT_CONFIG.copy())
 
 
 def save_config(config):
@@ -59,10 +72,13 @@ def save_config(config):
 
 
 def truncate(text, max_len):
-    """Truncate text to max_len characters with ellipsis."""
-    if len(text) <= max_len:
-        return text
-    return text[:max_len] + "..."
+    """Build one-line preview and truncate to max_len with ellipsis."""
+    single_line = " ".join(
+        text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ").split()
+    )
+    if len(single_line) <= max_len:
+        return single_line
+    return single_line[:max_len] + "..."
 
 
 class StringEditDialog(Gtk.Dialog):
@@ -164,6 +180,12 @@ class MoveToSectionDialog(Gtk.Dialog):
 class EditDialog(Gtk.Dialog):
     """Dialog for editing sections and strings with tabs."""
 
+    @staticmethod
+    def _move_in_list(items, from_idx, to_idx):
+        """Move one item inside list while preserving order of others."""
+        item = items.pop(from_idx)
+        items.insert(to_idx, item)
+
     def __init__(self, parent, config):
         super().__init__(title="Edit Strings", parent=parent, modal=True)
         self.set_default_size(550, 450)
@@ -176,7 +198,7 @@ class EditDialog(Gtk.Dialog):
             "sections": [{"name": s["name"], "strings": s["strings"].copy()}
                          for s in config["sections"]]
         }
-        self.truncate_len = self.config["settings"].get("truncate_length", 30)
+        self.truncate_len = self.config["settings"].get("truncate_length", DEFAULT_TRUNCATE_LENGTH)
 
         box = self.get_content_area()
         box.set_spacing(10)
@@ -220,14 +242,21 @@ class EditDialog(Gtk.Dialog):
 
         box.pack_start(section_btn_box, False, False, 0)
 
+        section_hint = Gtk.Label(label="Tip: drag section tabs to reorder")
+        section_hint.set_xalign(0)
+        section_hint.get_style_context().add_class("dim-label")
+        box.pack_start(section_hint, False, False, 0)
+
         # Notebook (tabs) for sections
         self.notebook = Gtk.Notebook()
         self.notebook.set_scrollable(True)
+        self.notebook.connect("page-reordered", self.on_section_reordered)
         box.pack_start(self.notebook, True, True, 0)
 
         # Store references to tree views and stores
         self.section_stores = []
         self.section_trees = []
+        self.section_pages = []
 
         self.rebuild_tabs()
 
@@ -241,6 +270,7 @@ class EditDialog(Gtk.Dialog):
 
         self.section_stores = []
         self.section_trees = []
+        self.section_pages = []
 
         for idx, section in enumerate(self.config["sections"]):
             self.add_section_tab(section, idx)
@@ -304,9 +334,26 @@ class EditDialog(Gtk.Dialog):
         # Add tab
         label = Gtk.Label(label=section["name"])
         self.notebook.append_page(tab_box, label)
+        self.notebook.set_tab_reorderable(tab_box, True)
 
         self.section_stores.append(store)
         self.section_trees.append(tree)
+        self.section_pages.append(tab_box)
+
+    def on_section_reordered(self, notebook, child, page_num):
+        """Keep section data in sync with notebook tab reorder."""
+        try:
+            old_idx = self.section_pages.index(child)
+        except ValueError:
+            return
+
+        if old_idx == page_num:
+            return
+
+        self._move_in_list(self.section_pages, old_idx, page_num)
+        self._move_in_list(self.section_stores, old_idx, page_num)
+        self._move_in_list(self.section_trees, old_idx, page_num)
+        self._move_in_list(self.config["sections"], old_idx, page_num)
 
     def get_current_section_idx(self):
         return self.notebook.get_current_page()
@@ -365,6 +412,7 @@ class EditDialog(Gtk.Dialog):
             del self.config["sections"][idx]
             del self.section_stores[idx]
             del self.section_trees[idx]
+            del self.section_pages[idx]
             self.notebook.remove_page(idx)
 
     def on_row_activated(self, tree, path, column):
@@ -500,7 +548,7 @@ class PopupWindow(Gtk.Window):
         self.set_resizable(False)
 
         self.config = load_config()
-        self.truncate_len = self.config["settings"].get("truncate_length", 30)
+        self.truncate_len = self.config["settings"].get("truncate_length", DEFAULT_TRUNCATE_LENGTH)
         self.current_section_idx = 0
         self.section_checkboxes = {}  # {section_idx: [checkboxes]}
 
@@ -721,7 +769,7 @@ class PopupWindow(Gtk.Window):
 
         if response == Gtk.ResponseType.OK:
             self.config = dialog.get_config()
-            self.truncate_len = self.config["settings"].get("truncate_length", 30)
+            self.truncate_len = self.config["settings"].get("truncate_length", DEFAULT_TRUNCATE_LENGTH)
             save_config(self.config)
             # Reset checkboxes
             self.section_checkboxes = {i: [] for i in range(len(self.config["sections"]))}
