@@ -2,8 +2,10 @@
 
 A Linux utility that replaces the default middle-click paste with a customizable text snippet selector.
 
+The recommended target is Ubuntu GNOME 22.04/24.04 on both X11 and GNOME Wayland.
+
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Linux%20(X11)-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-Ubuntu%20GNOME%20(X11%20%2B%20Wayland)-lightgrey.svg)
 
 ## Features
 
@@ -31,12 +33,12 @@ A Linux utility that replaces the default middle-click paste with a customizable
 
 ## Requirements
 
-- Linux with X11 (not Wayland)
+- Ubuntu GNOME 22.04 or 24.04
 - Python 3
 - GTK 3 (python3-gi)
-- xbindkeys
-- xdotool
 - xclip
+- wl-clipboard (recommended)
+- python3-evdev (for the global middle-click daemon)
 
 ## Installation
 
@@ -52,39 +54,35 @@ cd prompt-click
 
 1. Install dependencies:
 ```bash
-sudo apt install python3 python3-gi xbindkeys xdotool xclip
+sudo apt install python3 python3-gi xclip wl-clipboard python3-evdev
 ```
 
-2. Copy the script:
+2. Copy the app:
 ```bash
 mkdir -p ~/.local/bin
 cp prompt_click.py ~/.local/bin/prompt_click
 chmod +x ~/.local/bin/prompt_click
 ```
 
-3. Configure xbindkeys:
+3. Install the GNOME middle-click daemon:
 ```bash
-echo '"$HOME/.local/bin/prompt_click"
-  b:2 + Release' > ~/.xbindkeysrc
+sudo install -m 755 prompt_click_middle_daemon.py /usr/local/bin/prompt_click_middle_daemon.py
+sudo install -m 644 systemd/prompt-click-middle.service /etc/systemd/system/prompt-click-middle.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now prompt-click-middle.service
 ```
 
-4. Add to autostart:
+4. Optional desktop launcher for editing/snippet management:
 ```bash
-mkdir -p ~/.config/autostart
-cat > ~/.config/autostart/prompt-click.desktop << EOF
+mkdir -p ~/.local/share/applications
+cat > ~/.local/share/applications/prompt-click.desktop << EOF
 [Desktop Entry]
 Type=Application
 Name=Prompt Click
-Exec=sh -c "sleep 2 && xbindkeys"
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
+Exec=$HOME/.local/bin/prompt_click --paste-mode auto
+Terminal=false
+Categories=Utility;
 EOF
-```
-
-5. Start xbindkeys:
-```bash
-xbindkeys
 ```
 
 ## Usage
@@ -132,9 +130,12 @@ Example:
 Or manually:
 ```bash
 rm ~/.local/bin/prompt_click
-rm ~/.config/autostart/prompt-click.desktop
+rm ~/.local/share/applications/prompt-click.desktop
+sudo systemctl disable --now prompt-click-middle.service
+sudo rm /etc/systemd/system/prompt-click-middle.service
+sudo rm /usr/local/bin/prompt_click_middle_daemon.py
 rm -rf ~/.config/prompt_click
-pkill xbindkeys
+sudo systemctl daemon-reload
 ```
 
 ## License

@@ -1,0 +1,13 @@
+[Unit]
+Description=Prompt Click middle-button interceptor
+After=systemd-logind.service graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/prompt_click_middle_daemon.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

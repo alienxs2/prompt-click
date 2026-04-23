@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+import argparse
 import gi
 import json
 import os
+import shutil
 import subprocess
 import time
 
@@ -11,6 +13,22 @@ from gi.repository import Gtk, Gdk, GLib
 
 CONFIG_FILE = os.path.expanduser("~/.config/prompt_click/strings.json")
 DEFAULT_TRUNCATE_LENGTH = 100
+PASTE_MODE_AUTO = "auto"
+PASTE_MODE_COPY = "copy"
+AUTOPASTE_TRIGGER_PATH = os.environ.get("PROMPT_CLICK_AUTOPASTE_TRIGGER")
+AUTOPASTE_TRIGGER_TOKEN = os.environ.get("PROMPT_CLICK_AUTOPASTE_TOKEN")
+
+
+def detect_session_type():
+    if os.environ.get("XDG_SESSION_TYPE"):
+        return os.environ["XDG_SESSION_TYPE"].lower()
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return "wayland"
+    return "x11"
+
+
+SESSION_TYPE = detect_session_type()
+IS_WAYLAND = SESSION_TYPE == "wayland"
 
 DEFAULT_CONFIG = {
     "settings": {
@@ -79,6 +97,65 @@ def truncate(text, max_len):
     if len(single_line) <= max_len:
         return single_line
     return single_line[:max_len] + "..."
+
+
+def command_exists(command):
+    return shutil.which(command) is not None
+
+
+def notify_user(message):
+    """Best-effort desktop notification for copy-only flows."""
+    if command_exists("notify-send"):
+        subprocess.Popen([
+            "notify-send",
+            "Prompt Click",
+            message,
+        ])
+
+
+def request_autopaste(text):
+    """Signal the external launcher that clipboard is ready for paste."""
+    if not AUTOPASTE_TRIGGER_PATH or not AUTOPASTE_TRIGGER_TOKEN:
+        return False
+
+    try:
+        with open(AUTOPASTE_TRIGGER_PATH, "w", encoding="utf-8") as f:
+            json.dump({
+                "token": AUTOPASTE_TRIGGER_TOKEN,
+                "text": text,
+            }, f, ensure_ascii=False)
+        return True
+    except OSError:
+        return False
+
+
+def copy_text_to_clipboards(text):
+    """Copy text using the best clipboard backend available."""
+    text_bytes = text.encode("utf-8")
+
+    if IS_WAYLAND and command_exists("wl-copy"):
+        subprocess.run(
+            ["wl-copy", "--type", "text/plain;charset=utf-8"],
+            input=text_bytes,
+            check=True,
+        )
+        return "wl-copy"
+
+    if command_exists("xclip"):
+        proc = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
+        proc.communicate(text_bytes)
+        proc = subprocess.Popen(["xclip", "-selection", "primary"], stdin=subprocess.PIPE)
+        proc.communicate(text_bytes)
+        return "xclip"
+
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    clipboard.set_text(text, -1)
+    clipboard.store()
+
+    primary = Gtk.Clipboard.get(Gdk.SELECTION_PRIMARY)
+    primary.set_text(text, -1)
+    primary.store()
+    return "gtk"
 
 
 class StringEditDialog(Gtk.Dialog):
@@ -529,22 +606,34 @@ class EditDialog(Gtk.Dialog):
 class PopupWindow(Gtk.Window):
     """Main popup window for selecting strings."""
 
-    def __init__(self):
+    def __init__(self, paste_mode):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.paste_mode = paste_mode
+        self.external_autopaste = bool(AUTOPASTE_TRIGGER_PATH and AUTOPASTE_TRIGGER_TOKEN)
+        self.copy_only_mode = paste_mode == PASTE_MODE_COPY or (
+            IS_WAYLAND and not self.external_autopaste
+        )
 
         # Remember active window before popup
-        try:
-            result = subprocess.run(["xdotool", "getactivewindow"],
-                                    capture_output=True, text=True, check=True)
-            self.previous_window_id = result.stdout.strip()
-        except:
-            self.previous_window_id = None
+        self.previous_window_id = None
+        if not self.copy_only_mode:
+            try:
+                result = subprocess.run(
+                    ["xdotool", "getactivewindow"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.previous_window_id = result.stdout.strip()
+            except Exception:
+                self.previous_window_id = None
 
         self.set_decorated(False)
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
         self.set_keep_above(True)
-        self.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
+        if not IS_WAYLAND:
+            self.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
         self.set_resizable(False)
 
         self.config = load_config()
@@ -609,10 +698,19 @@ class PopupWindow(Gtk.Window):
         self.counter_label.set_xalign(0)
         self.main_box.pack_start(self.counter_label, False, False, 0)
 
+        if self.copy_only_mode:
+            info_label = Gtk.Label(
+                label="Wayland mode: copies to clipboard. Paste with Ctrl+V in the target app."
+            )
+            info_label.set_xalign(0)
+            info_label.set_line_wrap(True)
+            info_label.get_style_context().add_class("dim-label")
+            self.main_box.pack_start(info_label, False, False, 0)
+
         # Buttons
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
 
-        ok_btn = Gtk.Button(label="OK")
+        ok_btn = Gtk.Button(label="Copy" if self.copy_only_mode else "Paste")
         ok_btn.connect("clicked", self.on_ok)
         ok_btn.get_style_context().add_class("suggested-action")
         btn_box.pack_start(ok_btn, True, True, 0)
@@ -707,6 +805,10 @@ class PopupWindow(Gtk.Window):
 
     def position_at_cursor(self):
         """Position window at mouse cursor."""
+        if IS_WAYLAND:
+            self.set_position(Gtk.WindowPosition.CENTER)
+            return
+
         display = Gdk.Display.get_default()
         seat = display.get_default_seat()
         pointer = seat.get_pointer()
@@ -739,21 +841,21 @@ class PopupWindow(Gtk.Window):
 
         if selected:
             text = ", ".join(selected)
-            # Use xclip for reliable clipboard (survives app exit)
-            p = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
-            p.communicate(text.encode("utf-8"))
-            p = subprocess.Popen(["xclip", "-selection", "primary"], stdin=subprocess.PIPE)
-            p.communicate(text.encode("utf-8"))
+            copy_text_to_clipboards(text)
 
             # Close window first
             self.destroy()
 
             # Restore focus and paste
-            if self.previous_window_id:
+            if request_autopaste(text):
+                pass
+            elif self.previous_window_id:
                 time.sleep(0.1)
                 subprocess.run(["xdotool", "windowactivate", self.previous_window_id], check=False)
                 time.sleep(0.1)
                 subprocess.run(["xdotool", "key", "shift+Insert"], check=False)
+            else:
+                notify_user("Copied to clipboard. Paste with Ctrl+V.")
         else:
             self.destroy()
         Gtk.main_quit()
@@ -796,8 +898,20 @@ class PopupWindow(Gtk.Window):
         return False
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Prompt Click phrase picker")
+    parser.add_argument(
+        "--paste-mode",
+        choices=[PASTE_MODE_AUTO, PASTE_MODE_COPY],
+        default=PASTE_MODE_AUTO,
+        help="auto uses external auto-paste when available; otherwise X11 pastes locally and Wayland falls back to clipboard copy",
+    )
+    return parser.parse_args()
+
+
 def main():
-    win = PopupWindow()
+    args = parse_args()
+    win = PopupWindow(args.paste_mode)
     win.connect("destroy", Gtk.main_quit)
     Gtk.main()
 

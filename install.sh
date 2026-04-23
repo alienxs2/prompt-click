@@ -4,7 +4,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$HOME/.local/bin"
-AUTOSTART_DIR="$HOME/.config/autostart"
+APPLICATIONS_DIR="$HOME/.local/share/applications"
 
 # Colors
 RED='\033[0;31m'
@@ -30,7 +30,7 @@ uninstall() {
 
     pkill xbindkeys 2>/dev/null || true
     rm -f "$INSTALL_DIR/prompt_click"
-    rm -f "$AUTOSTART_DIR/prompt-click.desktop"
+    rm -f "$APPLICATIONS_DIR/prompt-click.desktop"
     rm -f "$HOME/.xbindkeysrc"
 
     print_status "Uninstalled. Config at ~/.config/prompt_click/ preserved."
@@ -45,14 +45,15 @@ fi
 
 print_status "Installing Prompt Click..."
 
-# Check for X11
-if [[ "$XDG_SESSION_TYPE" != "x11" ]]; then
-    print_warning "This tool requires X11. You appear to be running $XDG_SESSION_TYPE."
-    print_warning "It may not work correctly on Wayland."
+# Check session type
+SESSION_TYPE="${XDG_SESSION_TYPE:-unknown}"
+if [[ "$SESSION_TYPE" == "wayland" ]]; then
+    print_warning "Wayland session detected."
+    print_warning "This installer sets up the Prompt Click app; global middle-click auto-paste on GNOME Wayland also requires the system daemon in prompt_click_middle_daemon.py."
 fi
 
 # Check dependencies
-DEPS=(python3 xbindkeys xdotool xclip)
+DEPS=(python3 xclip)
 MISSING=()
 
 for dep in "${DEPS[@]}"; do
@@ -77,43 +78,29 @@ fi
 
 # Create directories
 mkdir -p "$INSTALL_DIR"
-mkdir -p "$AUTOSTART_DIR"
+mkdir -p "$APPLICATIONS_DIR"
 
 # Copy script
 cp "$SCRIPT_DIR/prompt_click.py" "$INSTALL_DIR/prompt_click"
 chmod +x "$INSTALL_DIR/prompt_click"
 print_status "Installed script to $INSTALL_DIR/prompt_click"
 
-# Configure xbindkeys
-cat > "$HOME/.xbindkeysrc" << EOF
-# Prompt Click - middle mouse button
-"$INSTALL_DIR/prompt_click"
-  b:2 + Release
-EOF
-print_status "Created ~/.xbindkeysrc"
-
-# Create autostart entry
-cat > "$AUTOSTART_DIR/prompt-click.desktop" << EOF
+# Create desktop entry for manual launch/editing
+cat > "$APPLICATIONS_DIR/prompt-click.desktop" << EOF
 [Desktop Entry]
 Type=Application
 Name=Prompt Click
-Comment=Middle click popup for text snippets
-Exec=sh -c "sleep 2 && xbindkeys"
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
+Comment=Snippet picker and editor
+Exec=$INSTALL_DIR/prompt_click --paste-mode auto
+Terminal=false
+Categories=Utility;
 EOF
-print_status "Created autostart entry"
-
-# Start xbindkeys
-pkill xbindkeys 2>/dev/null || true
-xbindkeys
-print_status "Started xbindkeys"
+print_status "Created desktop entry"
 
 echo ""
 print_status "Installation complete!"
 echo ""
-echo "Usage: Click middle mouse button to open the snippet selector."
-echo "       Edit snippets via the Edit... button in the popup."
+echo "Usage: Launch Prompt Click from the desktop entry to edit and test snippets."
+echo "       For GNOME X11/Wayland middle-click integration, install the system daemon from prompt_click_middle_daemon.py and systemd/prompt-click-middle.service."
 echo ""
 print_warning "To uninstall: $SCRIPT_DIR/install.sh --uninstall"
