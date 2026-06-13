@@ -45,10 +45,8 @@ final class PromptClickDaemon {
             kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
         ] as CFDictionary
 
-        guard AXIsProcessTrustedWithOptions(options) else {
-            fputs("\(label): Accessibility permission is required.\n", stderr)
-            fputs("Enable the installed daemon in System Settings > Privacy & Security > Accessibility.\n", stderr)
-            return false
+        if !AXIsProcessTrustedWithOptions(options) {
+            fputs("\(label): Accessibility permission check returned false; trying to create event tap anyway.\n", stderr)
         }
 
         let mask =
@@ -74,6 +72,7 @@ final class PromptClickDaemon {
             userInfo: refcon
         ) else {
             fputs("\(label): failed to create event tap.\n", stderr)
+            fputs("Enable Prompt Click in System Settings > Privacy & Security > Accessibility.\n", stderr)
             return false
         }
 
