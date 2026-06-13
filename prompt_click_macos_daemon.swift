@@ -1,4 +1,5 @@
 import ApplicationServices
+import AppKit
 import Foundation
 
 private let label = "Prompt Click macOS middle-click daemon"
@@ -10,6 +11,11 @@ func writeLine(_ message: String, to handle: FileHandle = .standardOutput) {
     if let data = "\(message)\n".data(using: .utf8) {
         try? handle.write(contentsOf: data)
     }
+}
+
+struct AutoPastePayload: Decodable {
+    let token: String
+    let text: String
 }
 
 final class PromptClickDaemon {
@@ -26,6 +32,12 @@ final class PromptClickDaemon {
 
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.local/bin/prompt_click"
+    }
+
+    private var triggerDirectory: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("PromptClick", isDirectory: true)
     }
 
     func start() -> Bool {
@@ -125,6 +137,19 @@ final class PromptClickDaemon {
 
         writeLine("\(label): launching \(binary)")
 
+        let previousApp = NSWorkspace.shared.frontmostApplication
+        let token = UUID().uuidString
+        let triggerURL = triggerDirectory.appendingPathComponent("autopaste-\(token).json")
+        do {
+            try FileManager.default.createDirectory(
+                at: triggerDirectory,
+                withIntermediateDirectories: true
+            )
+            try? FileManager.default.removeItem(at: triggerURL)
+        } catch {
+            fputs("\(label): failed to prepare trigger directory: \(error)\n", stderr)
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = ["--paste-mode", "auto"]
@@ -134,8 +159,11 @@ final class PromptClickDaemon {
         } else {
             environment["PATH"] = defaultPath
         }
+        environment["PROMPT_CLICK_AUTOPASTE_TOKEN"] = token
+        environment["PROMPT_CLICK_AUTOPASTE_TRIGGER"] = triggerURL.path
         process.environment = environment
         process.terminationHandler = { [weak self] _ in
+            self?.handlePromptExit(triggerURL: triggerURL, token: token, previousApp: previousApp)
             self?.lock.lock()
             self?.launchInProgress = false
             self?.lock.unlock()
@@ -148,6 +176,54 @@ final class PromptClickDaemon {
             fputs("\(label): failed to launch \(binary): \(error)\n", stderr)
             launchInProgress = false
         }
+    }
+
+    private func handlePromptExit(triggerURL: URL, token: String, previousApp: NSRunningApplication?) {
+        defer {
+            try? FileManager.default.removeItem(at: triggerURL)
+        }
+
+        guard
+            let data = try? Data(contentsOf: triggerURL),
+            let payload = try? JSONDecoder().decode(AutoPastePayload.self, from: data),
+            payload.token == token
+        else {
+            writeLine("\(label): prompt closed without paste request")
+            return
+        }
+
+        setClipboard(payload.text)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            previousApp?.activate(options: [])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                self.emitPaste()
+                writeLine("\(label): pasted selected text")
+            }
+        }
+    }
+
+    private func setClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    private func emitPaste() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let keyCodeV = CGKeyCode(9)
+
+        guard
+            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCodeV, keyDown: true),
+            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCodeV, keyDown: false)
+        else {
+            fputs("\(label): failed to create Cmd+V events\n", stderr)
+            return
+        }
+
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
     }
 }
 

@@ -14,6 +14,8 @@ CONFIG_FILE = Path(os.environ.get(
 DEFAULT_TRUNCATE_LENGTH = 100
 PASTE_MODE_AUTO = "auto"
 PASTE_MODE_COPY = "copy"
+AUTOPASTE_TRIGGER_PATH = os.environ.get("PROMPT_CLICK_AUTOPASTE_TRIGGER")
+AUTOPASTE_TRIGGER_TOKEN = os.environ.get("PROMPT_CLICK_AUTOPASTE_TOKEN")
 
 DEFAULT_CONFIG = {
     "settings": {
@@ -133,6 +135,21 @@ return bundleId & linefeed & appName
 
 def copy_text_to_clipboard(text):
     subprocess.run(["pbcopy"], input=text, text=True, check=True)
+
+
+def request_autopaste(text):
+    if not AUTOPASTE_TRIGGER_PATH or not AUTOPASTE_TRIGGER_TOKEN:
+        return False
+
+    try:
+        with open(AUTOPASTE_TRIGGER_PATH, "w", encoding="utf-8") as f:
+            json.dump({
+                "token": AUTOPASTE_TRIGGER_TOKEN,
+                "text": text,
+            }, f, ensure_ascii=False)
+        return True
+    except OSError:
+        return False
 
 
 def paste_to_frontmost_app(frontmost_app):
@@ -482,8 +499,13 @@ class PickerApp:
         self.ttk = ttk
         self.messagebox = messagebox
         self.paste_mode = paste_mode
+        self.external_autopaste = bool(AUTOPASTE_TRIGGER_PATH and AUTOPASTE_TRIGGER_TOKEN)
         self.config = load_config()
-        self.frontmost_app = get_frontmost_app() if paste_mode == PASTE_MODE_AUTO else None
+        self.frontmost_app = (
+            get_frontmost_app()
+            if paste_mode == PASTE_MODE_AUTO and not self.external_autopaste
+            else None
+        )
         self.root = tk.Tk()
         self.root.title("Prompt Click")
         self.root.minsize(420, 320)
@@ -574,6 +596,12 @@ class PickerApp:
             self.messagebox.showinfo("Prompt Click", "Select at least one string.", parent=self.root)
             return
         copy_text_to_clipboard(text)
+        if self.paste_mode == PASTE_MODE_AUTO and self.external_autopaste:
+            if not request_autopaste(text):
+                notify_user("Copied selected text. Auto-paste trigger failed.")
+            self.root.destroy()
+            return
+
         self.root.destroy()
         if self.paste_mode == PASTE_MODE_AUTO:
             if not paste_to_frontmost_app(self.frontmost_app):
